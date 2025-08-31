@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include "NetDebug.h"
 #include <esp_wifi.h>
+#include "config.h"
 
 /* ===== 初期化 ======================================================== */
 void AppStateMachine::begin() {
@@ -59,9 +60,8 @@ void AppStateMachine::netcamTask(void* arg){
     auto* self = static_cast<AppStateMachine*>(arg);
 
     for(;;){
-        /* ---------- WebSocket 接続待機/維持 ---------------------- */
+        // --- WS_WAIT ---
         if (self->st == S::WS_WAIT) {
-            /* Wi-Fi まだなら開始 */
             if (!self->wifiStarted && self->wifiCreds.ssid.length()) {
                 LOGI("WiFi","begin SSID=%s", self->wifiCreds.ssid.c_str());
                 WiFi.mode(WIFI_STA);
@@ -71,15 +71,22 @@ void AppStateMachine::netcamTask(void* arg){
                 self->wifiStarted = true;
             }
 
-            /* WS 接続試行 */
             if (self->wifiStarted && WiFi.status() == WL_CONNECTED && !self->ws.ready()) {
                 if (self->ws.begin(self->wifiCreds.ip.c_str(), self->wifiCreds.port)) {
                     LOGI("WS","ws.begin(%s:%u)",
                          self->wifiCreds.ip.c_str(), self->wifiCreds.port);
 
-                    self->udp.begin(self->wifiCreds.ip.c_str(), self->wifiCreds.port);
+                #if STREAM_MODE==3
+                    const uint16_t udp_port = self->wifiCreds.port;   
+                    self->udp.begin(self->wifiCreds.ip.c_str(), udp_port,
+                                    UdpAgent::Mode::RAW_JPEG_DATAGRAM);
+                #else
+                    const uint16_t udp_port = RTP_PORT;                
+                    self->udp.begin(self->wifiCreds.ip.c_str(), udp_port,
+                                    UdpAgent::Mode::RTP_JPEG);
+                #endif
                     LOGI("UDP","udp.begin(%s:%u)",
-                         self->wifiCreds.ip.c_str(), self->wifiCreds.port);
+                    self->wifiCreds.ip.c_str(), udp_port);
 
                     static bool bleStopped = false;
                     if (!bleStopped) {
@@ -91,7 +98,6 @@ void AppStateMachine::netcamTask(void* arg){
                 }
             }
 
-            /* ready になった瞬間 HOME へ */
             if (self->ws.ready() && self->st == S::WS_WAIT) {
                 LOGI("WS","CONNECTED → HOME");
                 self->btnActivate = true;
@@ -99,18 +105,29 @@ void AppStateMachine::netcamTask(void* arg){
             }
         }
 
-        /* ---------- WS ループ & 送信キュー処理 -------------------- */
+        // --- WS ループ & 送信キュー ---
         self->ws.loop();
         AppStateMachine::WsCmd cmd;
         while (self->wsQ && xQueueReceive(self->wsQ, &cmd, 0) == pdTRUE) {
-            if (cmd.type == WsCmdType::MODE)   self->ws.sendMode(cmd.val);
-            else                                self->ws.sendMotor(cmd.val);
+            if (cmd.type == WsCmdType::MODE) self->ws.sendMode(cmd.val);
+            else                             self->ws.sendMotor(cmd.val);
         }
 
-        /* ---------- 実行モード中：画像ストリーム ------------------ */
+        // --- 実行モード中：画像ストリーム ---
         if (self->st == S::SIG || self->st == S::STRAIGHT || self->st == S::OBJ) {
-            self->cam.stream(self->udp); 
+        #if   STREAM_MODE==0   // RTP/UDP
+            self->cam.stream(self->udp);
+        #elif STREAM_MODE==1   // RTSP(UDP)
+            // if(self->rtsp.isPlaying()) self->cam.stream(self->udp); // rtsp.loop() 側で begin 済み
+        #elif STREAM_MODE==2   // Legacy WS
+            self->cam.stream(self->ws);
+        #else                  // Legacy RAW UDP
+            self->cam.stream(self->udp);
+        #endif
         }
+
+        // RTP 1秒ごとの統計ログ
+        self->udp.tick1sReport();
 
         vTaskDelay(1);
     }
