@@ -29,7 +29,8 @@ void CharCB::onWrite(NimBLECharacteristic* c, NimBLEConnInfo&) {
 /* --- Advertising control --------------------------------------------- */
 bool BleAgent::begin(CredsCallback cb) {
     _cb = cb;
-    NimBLEDevice::init("XIAO-ESP32S3");
+    NimBLEDevice::init("WithCrossDevice");          
+    NimBLEDevice::setDeviceName("WithCrossDevice"); 
     NimBLEDevice::setMTU(128);
     NimBLEServer* svr = NimBLEDevice::createServer();
     svr->setCallbacks(new ServerCB(this));
@@ -41,7 +42,20 @@ bool BleAgent::begin(CredsCallback cb) {
     ch->setCallbacks(new CharCB(this));
 
     svc->start();
-    svr->getAdvertising()->start();
+    NimBLEAdvertising* adv = svr->getAdvertising();
+
+    // --- 広告データ（Advertise Data）：サービスUUID＋（可能なら）名前 ---
+    NimBLEAdvertisementData advData;
+    advData.addServiceUUID(svc->getUUID());
+    advData.setName("WithCrossDevice");   // 端末によってはここだけで十分に表示される
+    adv->setAdvertisementData(advData);
+
+    // --- スキャン応答データ（Scan Response Data）：名前を確実に載せる ---
+    NimBLEAdvertisementData scanData;
+    scanData.setName("WithCrossDevice");
+    adv->setScanResponseData(scanData);
+
+    adv->start();
     _t0 = millis();
     LOGI("BLE","Advertising (10-s timeout loop)");                     /// LOG
     return true;

@@ -6,7 +6,7 @@
 // 2: Legacy WebSocket (既存機能維持)
 // 3: Legacy UDP raw (1 datagram = 1 JPEG) 既存互換
 #ifndef STREAM_MODE
-#define STREAM_MODE 0
+#define STREAM_MODE 3
 #endif
 
 // ===== Camera =====
@@ -17,10 +17,10 @@
 #define CAM_HEIGHT  480
 #endif
 #ifndef CAM_FPS
-#define CAM_FPS     30
+#define CAM_FPS     15
 #endif
 #ifndef CAM_JPEG_QUALITY   // esp32-camera の "小さいほど高画質"
-#define CAM_JPEG_QUALITY  30   // 目安: 25~35 ≒ Baseline 70前後
+#define CAM_JPEG_QUALITY  60   // 目安: 25~35 ≒ Baseline 70前後
 #endif
 
 // ===== RTP over UDP =====
