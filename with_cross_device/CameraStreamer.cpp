@@ -42,7 +42,11 @@ void CameraStreamer::stream(UdpAgent& udp){
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb){ LOGW("CAM","fb null"); return; }
 
+#if STREAM_MODE==3
+    bool ok = udp.sendFrame(fb->buf, fb->len);
+#else
     bool ok = udp.sendRtpJpegFrame(fb->buf, fb->len, fb->width, fb->height);
+#endif
     esp_camera_fb_return(fb);
 
     if (ok) _tLast = millis();

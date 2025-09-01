@@ -127,8 +127,9 @@ void AppStateMachine::netcamTask(void* arg){
         }
 
         // RTP 1秒ごとの統計ログ
+#if STREAM_MODE == 0
         self->udp.tick1sReport();
-
+#endif
         vTaskDelay(1);
     }
 }
