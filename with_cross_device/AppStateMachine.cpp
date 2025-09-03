@@ -7,27 +7,29 @@
 /* ===== 初期化 ======================================================== */
 void AppStateMachine::begin() {
     initHardware();
-    buttons.begin(kBtnPins, 4); 
+    buttons.begin(kBtnPins, 4);
     LOGI("FSM","begin()");
 
-    /* BLE 受信 → Wi-Fi creds を取得したら WS_WAIT へ */
+#if !AUTO_STREAM_NO_BLE
+    // 既存: BLEで接続情報を受け取る
     ble.begin([this](const BleAgent::Creds& c) {
         wifiCreds = c;
         LOGI("FSM","BLE creds received: ssid=%s ip=%s port=%u",
              c.ssid.c_str(), c.ip.c_str(), c.port);
         to(S::WS_WAIT);
     });
+#else
+    bleActive = false;   // BLE 不使用
+#endif
 
     bool ok = cam.begin();
     LOGI("FSM","camera init=%d", ok);
 
-    /* WS送信用キュー作成（WS操作をcore1に集約） */
     wsQ = xQueueCreate(WS_Q_LEN, sizeof(WsCmd));
-
-    /* Core分離: UI(core0) / NET+CAM(core1) */
     xTaskCreatePinnedToCore(uiTask,    "uiTask",    4096, this, 2, &hUiTask, 0);
     xTaskCreatePinnedToCore(netcamTask,"netcamTask",6144, this, 2, &hNetTask, 1);
 }
+
 
 /* Arduino の loop は最小化（実処理は FreeRTOS タスクへ） */
 void AppStateMachine::loop() {
@@ -60,6 +62,30 @@ void AppStateMachine::netcamTask(void* arg){
     auto* self = static_cast<AppStateMachine*>(arg);
 
     for(;;){
+#if AUTO_STREAM_NO_BLE
+        // ---- 1) Wi-Fi（STA）に自動接続
+        if (!self->wifiStarted) {
+            LOGI("WiFi","begin SSID=%s", WIFI_STA_SSID);
+            WiFi.mode(WIFI_STA);
+            WiFi.setSleep(false);
+            esp_wifi_set_ps(WIFI_PS_NONE);
+            WiFi.begin(WIFI_STA_SSID, WIFI_STA_PSK);
+            self->wifiStarted = true;
+        }
+        // ---- 2) UDP(RTP/JPEG) 宛先PCに接続（1回だけ）
+        if (self->wifiStarted && WiFi.status() == WL_CONNECTED && !self->udp.ready()) {
+            self->udp.begin(RTP_DEST_IP, RTP_DEST_PORT, UdpAgent::Mode::RTP_JPEG);
+            LOGI("UDP","udp.begin(%s:%u)", RTP_DEST_IP, (unsigned)RTP_DEST_PORT);
+        }
+        // ---- 3) 送出（stateに依存させず常時）
+        if (self->udp.ready()) {
+            self->cam.stream(self->udp);   // フレームごとにRFC2435でRTP化して送出
+        }
+        self->udp.tick1sReport();
+        vTaskDelay(1);
+        continue;   // 既存WS/ボタン系の処理はバイパス
+#endif
+
         // --- WS_WAIT ---
         if (self->st == S::WS_WAIT) {
             if (!self->wifiStarted && self->wifiCreds.ssid.length()) {
